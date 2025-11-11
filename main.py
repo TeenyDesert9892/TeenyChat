@@ -1,8 +1,6 @@
-from click.decorators import command
-from attr.validators import max_len
 import flet as ft
-import sys
 
+host_ip = "192.168.18.55"
 
 class Message:
     def __init__(self, user_name: str, text: str, message_type: str) -> None:
@@ -31,11 +29,13 @@ class ChatMessage(ft.Row):
             ),
         ]
 
+
     def get_initials(self, user_name: str) -> str:
         if user_name:
             return user_name[:1].capitalize()
         else:
             return "Unknown"  # or any default value you prefer
+
 
     def get_avatar_color(self, user_name: str) -> str:
         colors_lookup= [
@@ -58,8 +58,8 @@ class ChatMessage(ft.Row):
 
 def main(page: ft.Page) -> None:
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
-    page.title = "Flet Chat"
-
+    page.title = "Teeny Chat"
+    
     def handle_exit(signum, frame) -> None:
         print("\nExiting chat app...")
         page.route("https://google.com")
@@ -69,52 +69,82 @@ def main(page: ft.Page) -> None:
 
     page.on_close = handle_exit
 
+    
+    def verify_admin() -> bool:
+        return True if page.session.get("user_name") == "Teeny" and page.client_ip == host_ip else False
+    
+
     def join_chat_click(e) -> None:
-        if not join_user_name.value:
+        if join_user_name.value == "":
             join_user_name.error_text = "Name cannot be blank!"
             join_user_name.update()
             return
         
-        page.session.set("user_name", f"{join_user_name.value} ({page.client_ip})")
+        if join_user_name.value == "Teeny" and page.client_ip == host_ip:
+            join_user_name.error_text = "This name is reserved!"
+            join_user_name.update()
+            return
+        
+        if join_user_name.value == "":
+            join_user_name.error_text = "This name is already taken!"
+            join_user_name.update()
+            return
+        
+        page.session.set("user_name", join_user_name.value)
         welcome_dlg.open = False
-        new_message.prefix = ft.Text(f"{join_user_name.value} ({page.client_ip}): ")
+        new_message.prefix = ft.Text(f"{join_user_name.value}:")
         page.pubsub.send_all(
             Message(
-                user_name=f"{join_user_name.value} ({page.client_ip})",
-                text=f"{join_user_name.value} ({page.client_ip}) has joined the chat.",
+                user_name=f"{join_user_name.value}",
+                text=f"{join_user_name.value} has joined the chat.",
                 message_type="login_message",
             )
         )
         page.update()
 
+
     def send_message_click(e) -> None:
         if new_message.value != "":
             page.pubsub.send_all(
                 Message(
-                    page.session.get("user_name"),
-                    new_message.value,
-                    message_type="command" if "/" == new_message.value[0] and page.session.get("user_name") == "Teeny (127.0.0.1)" else "chat_message",
+                    user_name=page.session.get("user_name"),
+                    text=new_message.value,
+                    message_type="command" if "/" in new_message.value and verify_admin() else "chat_message"
                 )
             )
             new_message.value = ""
             new_message.focus()
             page.update()
 
+
     def on_message(message: Message) -> None:
         if message.message_type == "chat_message":
             m = ChatMessage(message)
+            
         elif message.message_type == "login_message":
             m = ft.Text(message.text, italic=True, color=ft.Colors.BLUE_400, size=12)
+            
         elif message.message_type == "command":
-            if message.text.strip() == "/clear":
-                chat.controls.clear()
-                m = ft.Text("Chat cleared by admin", italic=True, color=ft.Colors.RED, size=12)
-            else:
-                m = ft.Text(f"Unknown command: {message.text}", italic=True, color=ft.Colors.RED, size=12)
+            command_args: list[str] = message.text.split()
+            match command_args[0]:
+                case "/clear":
+                    chat.controls.clear()
+                    m = ft.Text("Chat cleared by admin", italic=True, color=ft.Colors.RED, size=12)
+                    
+                case "/ban":
+                    if page.session.get("user_name") == command_args[1]:
+                        new_message.disabled = True
+                        new_message.hint_text = "You have been banned from the chat"
+                    m = ft.Text(f"User {command_args[1]} has been banned", italic=True, color=ft.Colors.RED, size=12)
+                    
+                case _:
+                    m = ft.Text(f"Unknown command: {message.text}", italic=True, color=ft.Colors.RED, size=12)
+                    
         chat.controls.append(m)
         page.update()
 
     page.pubsub.subscribe(on_message)
+
 
     # A dialog asking for a user display name
     join_user_name = ft.TextField(
