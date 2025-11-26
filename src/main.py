@@ -1,4 +1,11 @@
+from PIL import Image
+from io import BytesIO
+
 import flet as ft
+import numpy as np
+
+import sqlite3
+import base64
 import socket
 import os
 
@@ -7,56 +14,50 @@ host_ip = socket.gethostbyname(socket.gethostname())
 os.environ["FLET_SECRET_KEY"] = os.urandom(12).hex()
 os.environ["FLET_SERVER_PORT"] = "9892"
 
-class UsersList:
+class Database:
     def __init__(self) -> None:
-        self._users_list = []
-        self._banned_users = []
+        self.connection = sqlite3.connect("users.db")
+        self.cursor = self.connection.cursor()
         
-    def add_user(self, user_name: str) -> None:
-        self._users_list.append(user_name)
+        self.cursor.execute("""
+            DROP TABLE IF EXISTS USERS
+        """)
+        
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS USERS (
+            USER_NAME TEXT NOT NULL PRIMARY KEY,
+            IP_ADDRESS TEXT NOT NULL UNIQUE,
+            BANNED BOOL NOT NULL DEFAULT 0
+        )""")
+        
+    def add_user(self, user_name: str, ip_address: str) -> None:
+        self.cursor.execute(f"""INSERT INTO USERS (USER_NAME, IP_ADDRESS, BANNED) VALUES (
+            '{user_name}',
+            '{ip_address}',
+            0
+        )""")
+        
+        self.connection.commit()
     
     def remove_user(self, user_name: str) -> None:
-        self._users_list.remove(user_name)
+        self.cursor.execute(f"""DELETE FROM USERS WHERE USER_NAME = '{user_name}'""")
+        self.connection.commit()
     
     def get_users(self) -> list[str]:
-        return self._users_list
+        result = self.cursor.execute(f"""SELECT USER_NAME, IP_ADDRESS, BANNED FROM USERS""")
+        return result.fetchall()
     
     def add_banned_user(self, user_name: str) -> None:
-        self._banned_users.append(user_name)
+        self.cursor.execute(f"""UPDATE USERS SET BANNED = 1 WHERE USER_NAME = '{user_name}'""")
+        self.connection.commit()
     
     def remove_banned_user(self, user_name: str) -> None:
-        self._banned_users.remove(user_name)
+        self.cursor.execute(f"""UPDATE USERS SET BANNED = 0 WHERE USER_NAME = '{user_name}'""")
+        self.connection.commit()
     
     def get_banned_users(self) -> list[str]:
-        return self._banned_users
-
-
-class IP_List:
-    def __init__(self) -> None:
-        self._ips = []
-        self._banned_ips = []
-        
-    def add_ip(self, ip_address: str) -> None:
-        self._ips.append(ip_address)
-    
-    def remove_ip(self, ip_address:str) -> None:
-        self._ips.remove(ip_address)
-        
-    def get_ips(self) -> list[str]:
-        return self._ips
-
-    def add_banned_ip(self, ip_address: str) -> None:
-        self._banned_ips.append(ip_address)
-    
-    def remove_banned_ip(self, ip_address: str) -> None:
-        self._banned_ips.remove(ip_address)
-        
-    def get_banned_ips(self) -> list[str]:
-        return self._banned_ips
-
-
-user_list = UsersList()
-ip_list = IP_List()
+        result = self.cursor.execute(f"""SELECT USER_NAME, IP_ADDRESS, BANNED FROM USERS WHERE BANNED = 1""")
+        return result.fetchall()
 
 
 class Message:
@@ -64,17 +65,50 @@ class Message:
         self.user_name = user_name
         self.data = data
         self.message_type = message_type
+    
+    def send_message(self) -> ft.Row:
+        if self.message_type == "chat_message":
+            message = TextMessage(self)
+            
+        elif self.message_type == "image_message":
+            message = ImageMessage(self)
+            
+        return message
+    
+    
+    def get_initials(self, user_name: str) -> str:
+                return user_name[:1].capitalize() if user_name else socket.gethostbyname()
 
 
-class ChatMessage(ft.Row):
+    def get_avatar_color(self, user_name: str) -> str:
+        colors_lookup= [
+            ft.Colors.AMBER,
+            ft.Colors.BLUE,
+            ft.Colors.BROWN,
+            ft.Colors.CYAN,
+            ft.Colors.GREEN,
+            ft.Colors.INDIGO,
+            ft.Colors.LIME,
+            ft.Colors.ORANGE,
+            ft.Colors.PINK,
+            ft.Colors.PURPLE,
+            ft.Colors.RED,
+            ft.Colors.TEAL,
+            ft.Colors.YELLOW,
+        ]
+        return colors_lookup[hash(user_name) % len(colors_lookup)]
+
+
+class TextMessage(ft.Row):
     def __init__(self, message: Message) -> None:
         super().__init__()
+        
         self.vertical_alignment = ft.CrossAxisAlignment.START
         self.controls = [
             ft.CircleAvatar(
-                content=ft.Text(self.get_initials(message.user_name)),
+                content=ft.Text(message.get_initials(message.user_name)),
                 color=ft.Colors.WHITE,
-                bgcolor=self.get_avatar_color(message.user_name),
+                bgcolor=message.get_avatar_color(message.user_name),
             ),
             ft.Column(
                 [
@@ -85,84 +119,46 @@ class ChatMessage(ft.Row):
                 spacing=5,
             ),
         ]
-        
-        
-    def get_initials(self, user_name: str) -> str:
-                return user_name[:1].capitalize() if user_name else socket.gethostbyname()
-
-
-    def get_avatar_color(self, user_name: str) -> str:
-        colors_lookup= [
-            ft.Colors.AMBER,
-            ft.Colors.BLUE,
-            ft.Colors.BROWN,
-            ft.Colors.CYAN,
-            ft.Colors.GREEN,
-            ft.Colors.INDIGO,
-            ft.Colors.LIME,
-            ft.Colors.ORANGE,
-            ft.Colors.PINK,
-            ft.Colors.PURPLE,
-            ft.Colors.RED,
-            ft.Colors.TEAL,
-            ft.Colors.YELLOW,
-        ]
-        return colors_lookup[hash(user_name) % len(colors_lookup)]
 
 
 class ImageMessage(ft.Row):
     def __init__(self, message: Message) -> None:
         super().__init__()
+        
+        image_path = os.path.normpath(f"{os.getcwd()}/src/assets/{message.data}")
+        pillow_photo = Image.open(image_path)
+        arr = np.asarray(pillow_photo)
+
+        pillow_img = Image.fromarray(arr)
+        buff = BytesIO()
+        pillow_img.save(buff, format=pillow_photo.format)
+        
         self.vertical_alignment = ft.CrossAxisAlignment.START
         self.controls = [
             ft.CircleAvatar(
-                content=ft.Text(self.get_initials(message.user_name)),
+                content=ft.Text(message.get_initials(message.user_name)),
                 color=ft.Colors.WHITE,
-                bgcolor=self.get_avatar_color(message.user_name),
+                bgcolor=message.get_avatar_color(message.user_name),
             ),
             ft.Column(
                 [
                     ft.Text(message.user_name, weight="bold", selectable=True),
-                    ft.Image(src=os.path.normpath(f"{os.getcwd()}/assets/{message.data}"), width=200),
+                    ft.Image(src_base64=base64.b64encode(buff.getvalue()).decode('utf-8'),
+                            width=pillow_photo.width if pillow_photo.width < 600 else 600),
                 ],
                 tight=True,
                 spacing=5,
             ),
         ]
-    
-    
-    def get_initials(self, user_name: str) -> str:
-                return user_name[:1].capitalize() if user_name else socket.gethostbyname()
-
-
-    def get_avatar_color(self, user_name: str) -> str:
-        colors_lookup= [
-            ft.Colors.AMBER,
-            ft.Colors.BLUE,
-            ft.Colors.BROWN,
-            ft.Colors.CYAN,
-            ft.Colors.GREEN,
-            ft.Colors.INDIGO,
-            ft.Colors.LIME,
-            ft.Colors.ORANGE,
-            ft.Colors.PINK,
-            ft.Colors.PURPLE,
-            ft.Colors.RED,
-            ft.Colors.TEAL,
-            ft.Colors.YELLOW,
-        ]
-        return colors_lookup[hash(user_name) % len(colors_lookup)]
 
 
 def main(page: ft.Page) -> None:
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
     page.title = "Teeny Chat"
     
+    DataBase = Database()
     
-    def on_exit(event) -> None:
-        user_list.remove_user(page.session.get("user_name"))
-        ip_list.remove_ip(page.client_ip)
-        
+    def on_exit(event) -> None:        
         page.pubsub.send_all(
             Message(
                 user_name=f"{page.session.get('user_name')}",
@@ -175,14 +171,10 @@ def main(page: ft.Page) -> None:
     
     
     def on_join(event) -> None:
-        if page.client_ip in ip_list.get_banned_ips():
+        if page.client_ip in DataBase.get_banned_users():
             new_message.disabled = True
             send_message.disabled = True
         
-        page.session.remove("user_name")
-        
-        ip_list.add_ip(page.client_ip)
-        welcome_dlg.open = True
         page.update()
     
     
@@ -209,21 +201,19 @@ def main(page: ft.Page) -> None:
             join_user_name.update()
             return
         
-        if join_user_name.value in user_list.get_users():
+        if join_user_name.value in DataBase.get_users():
             join_user_name.error_text = "This name is already taken!"
             join_user_name.update()
             return
         
         
-        user_list.add_user(join_user_name.value)
+        DataBase.add_user(join_user_name.value, page.client_ip)
         page.session.set("user_name", join_user_name.value)
-        
-        ip_list.add_ip(page.client_ip)
         
         welcome_dlg.open = False
         new_message.prefix = ft.Text(f"{join_user_name.value}: ")
         
-        if page.client_ip in ip_list.get_banned_ips():
+        if page.client_ip in DataBase.get_users():
             new_message.disabled = True
             send_message.disabled = True
             new_message.hint_text = "You have been banned from the chat"
@@ -232,7 +222,7 @@ def main(page: ft.Page) -> None:
             Message(
                 user_name=f"{join_user_name.value}",
                 data=f"The ghost {join_user_name.value} has joined the chat."
-                    if page.client_ip in ip_list.get_banned_ips()
+                    if page.client_ip in DataBase.get_banned_users()
                     else f"{join_user_name.value} has joined the chat.",
                 message_type="login_message",
             )
@@ -253,26 +243,22 @@ def main(page: ft.Page) -> None:
             new_message.focus()
             page.update()
 
+
     def send_image_click(event) -> None:      
         if event.progress == 1.0:
             page.pubsub.send_all(
                 Message(
                     user_name=page.session.get("user_name"),
-                    data=f"assets/upload/images/{event.file_name}",
+                    data=f"upload/images/{event.file_name}",
                     message_type="image_message"
                 )
             )
             new_message.focus()
             page.update()
 
-    def on_message(message: Message) -> None:
-        if message.message_type == "chat_message":
-            m = ChatMessage(message)
-        
-        elif message.message_type == "image_message":
-            m = ImageMessage(message)
-            
-        elif message.message_type == "login_message":
+
+    async def on_message(message: Message) -> None:
+        if message.message_type == "login_message":
             m = ft.Text(message.data, italic=True, color=ft.Colors.BLUE_400, size=12)
             
         elif message.message_type == "command":
@@ -284,6 +270,13 @@ def main(page: ft.Page) -> None:
                 case "/clear":
                     chat.controls.clear()
                     m = ft.Text("Chat cleared by god", italic=True, color=ft.Colors.RED, size=12)
+                
+                case "/clear-img":
+                    for file in os.scandir("src/assets/upload/images"):
+                        os.remove(f"src/assets/upload/images/{file.name}")
+                    
+                    if message.user_name == page.session.get("user_name"):
+                        m = ft.Text("Images cleared by god", italic=True, color=ft.Colors.RED, size=12)
                     
                 case "/ban":
                     if page.session.get("user_name") == command_args[1]:
@@ -291,8 +284,7 @@ def main(page: ft.Page) -> None:
                         send_message.disabled = True
                         new_message.hint_text = "You have been banned from the chat"
                         
-                        user_list.add_banned_user(command_args[1])
-                        ip_list.add_banned_ip(page.client_ip)
+                        DataBase.add_banned_user(command_args[1])
                         
                     m = ft.Text(f"User {command_args[1]} has been banned", italic=True, color=ft.Colors.RED, size=12)
                 
@@ -302,10 +294,9 @@ def main(page: ft.Page) -> None:
                         send_message.disabled = False
                         new_message.hint_text = "Write a message..."
                         
-                        user_list.remove_banned_user(command_args[1]) if command_args[1] in user_list.get_banned_users() else None
-                        ip_list.remove_banned_ip(page.client_ip) if page.client_ip in ip_list.get_banned_ips() else None
+                        DataBase.remove_banned_user(command_args[1]) if command_args[1] in DataBase.get_banned_users() else None
                         
-                    m = ft.Text(f"User {command_args[1]} has been banned", italic=True, color=ft.Colors.BLUE_400, size=12)
+                    m = ft.Text(f"User {command_args[1]} has been unbanned", italic=True, color=ft.Colors.BLUE_400, size=12)
                 
                 case "/kick":
                     if page.session.get("user_name") == command_args[1]:
@@ -319,23 +310,17 @@ def main(page: ft.Page) -> None:
 
                 case "/users":
                     if page.session.get("user_name") == message.user_name:
-                        users = " ".join(user_list.get_users())
+                        users = " ".join(DataBase.get_users())
                         m = ft.Text(f"Current users: {users}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
-                    
-                case "/ips":
-                    if page.session.get("user_name") == message.user_name:
-                        ips = " ".join(ip_list.get_ips())
-                        m = ft.Text(f"IPs: {ips}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
-                
-                case "/baned_ips":
-                    if page.session.get("user_name") == message.user_name:
-                        ips = " ".join(ip_list.get_banned_ips())
-                        m = ft.Text(f"IPs: {ips}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
                     
                 case _:
                     m = ft.Text(f"Unknown command: {message.data}", italic=True, color=ft.Colors.RED, size=12)
-                    
+        else:
+            m = message.send_message()
+        
+        
         chat.controls.append(m)
+
         page.update()
 
     page.pubsub.subscribe(on_message)

@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "teenychat"
+version = "0.1.4"
+description = "A chat app maded with Flet"
+readme = "README.md"
+python = "3.14"
+flet = "0.28.3"
+authors = [
+    { name = "TeenyDesert9892", email = "teenydesert9892@gmail.com" }
+]
+
+[project]
+dependencies = [
+  "flet==0.26.0"
+]
+
+[tool.flet]
+org = "com.github.teenydesert9892"
+product = "teenychat"
+copyright = "Copyright (C) 2025 by Flet"
+
+[tool.flet.compile]
+app = true
+packages = true
+cleanup = false
+
+[tool.flet.app]
+module = "main"
+path = "src"
