@@ -1,9 +1,11 @@
 from PIL import Image
 from io import BytesIO
+from icecream import ic
 
 import flet as ft
 import numpy as np
 
+import asyncio
 import sqlite3
 import base64
 import socket
@@ -16,22 +18,21 @@ os.environ["FLET_SERVER_PORT"] = "9892"
 
 class Database:
     def __init__(self) -> None:
-        self.connection = sqlite3.connect("users.db")
-        self.cursor = self.connection.cursor()
+        self.connection = sqlite3.connect("users.db", check_same_thread=False)
         
-        self.cursor.execute("""
+        self.connection.execute("""
             DROP TABLE IF EXISTS USERS
         """)
         
-        self.cursor.execute("""
+        self.connection.execute("""
         CREATE TABLE IF NOT EXISTS USERS (
-            USER_NAME TEXT NOT NULL PRIMARY KEY,
-            IP_ADDRESS TEXT NOT NULL UNIQUE,
+            USER_NAME TEXT NOT NULL UNIQUE PRIMARY KEY,
+            IP_ADDRESS TEXT NOT NULL,
             BANNED BOOL NOT NULL DEFAULT 0
         )""")
         
     def add_user(self, user_name: str, ip_address: str) -> None:
-        self.cursor.execute(f"""INSERT INTO USERS (USER_NAME, IP_ADDRESS, BANNED) VALUES (
+        self.connection.execute(f"""INSERT INTO USERS (USER_NAME, IP_ADDRESS, BANNED) VALUES (
             '{user_name}',
             '{ip_address}',
             0
@@ -40,24 +41,42 @@ class Database:
         self.connection.commit()
     
     def remove_user(self, user_name: str) -> None:
-        self.cursor.execute(f"""DELETE FROM USERS WHERE USER_NAME = '{user_name}'""")
+        self.connection.execute(f"""DELETE FROM USERS WHERE USER_NAME = '{user_name}'""")
         self.connection.commit()
     
     def get_users(self) -> list[str]:
-        result = self.cursor.execute(f"""SELECT USER_NAME, IP_ADDRESS, BANNED FROM USERS""")
-        return result.fetchall()
+        cursor = self.connection.cursor()
+        cursor.execute(f"""SELECT * FROM USERS""")
+        result = cursor.fetchall()
+        
+        return result
     
-    def add_banned_user(self, user_name: str) -> None:
-        self.cursor.execute(f"""UPDATE USERS SET BANNED = 1 WHERE USER_NAME = '{user_name}'""")
+    def add_banned_user(self, ip_address: str) -> None:
+        self.connection.execute(f"""UPDATE USERS SET BANNED = 1 WHERE IP_ADDRESS = '{ip_address}'""")
         self.connection.commit()
     
-    def remove_banned_user(self, user_name: str) -> None:
-        self.cursor.execute(f"""UPDATE USERS SET BANNED = 0 WHERE USER_NAME = '{user_name}'""")
+    def remove_banned_user(self, ip_address: str) -> None:
+        self.connection.execute(f"""UPDATE USERS SET BANNED = 0 WHERE IP_ADDRESS = '{ip_address}'""")
         self.connection.commit()
     
     def get_banned_users(self) -> list[str]:
-        result = self.cursor.execute(f"""SELECT USER_NAME, IP_ADDRESS, BANNED FROM USERS WHERE BANNED = 1""")
-        return result.fetchall()
+        cursor = self.connection.cursor()
+        cursor.execute(f"""SELECT * FROM USERS WHERE BANNED = 1""")
+        result = cursor.fetchall()
+        
+        return result
+    
+    def get_name_by_ip(self, ip_address: str) -> list[str]:
+        cursor = self.connection.cursor()
+        cursor.execute(f"""SELECT USER_NAME FROM USERS WHERE IP_ADDRESS = '{ip_address}'""")
+        result = cursor.fetchall()
+        
+        return list(sum(result, ()))
+    
+    def close_database(self) -> None:
+        self.connection.close()
+
+DataBase = Database()
 
 
 class Message:
@@ -156,9 +175,9 @@ def main(page: ft.Page) -> None:
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
     page.title = "Teeny Chat"
     
-    DataBase = Database()
-    
-    def on_exit(event) -> None:        
+    def on_exit(event) -> None:
+        DataBase.remove_user(page.session.get("user_name"))
+        
         page.pubsub.send_all(
             Message(
                 user_name=f"{page.session.get('user_name')}",
@@ -171,9 +190,21 @@ def main(page: ft.Page) -> None:
     
     
     def on_join(event) -> None:
+        if page.session.get("user_name"):
+            DataBase.add_user(page.session.get("user_name"), page.client_ip)
+        
         if page.client_ip in DataBase.get_banned_users():
             new_message.disabled = True
+            image_file_picker.disabled = True
             send_message.disabled = True
+        
+        page.pubsub.send_all(
+            Message(
+                user_name=f"{page.session.get('user_name')}",
+                data=f"{page.session.get('user_name')} has joined the chat.",
+                message_type="login_message"
+            )
+        )
         
         page.update()
     
@@ -201,19 +232,19 @@ def main(page: ft.Page) -> None:
             join_user_name.update()
             return
         
-        if join_user_name.value in DataBase.get_users():
-            join_user_name.error_text = "This name is already taken!"
+        try: DataBase.add_user(join_user_name.value, page.client_ip)
+        except sqlite3.IntegrityError:
+            join_user_name.error_text = "This name or IP is already in use!"
             join_user_name.update()
             return
         
-        
-        DataBase.add_user(join_user_name.value, page.client_ip)
         page.session.set("user_name", join_user_name.value)
         
         welcome_dlg.open = False
         new_message.prefix = ft.Text(f"{join_user_name.value}: ")
         
-        if page.client_ip in DataBase.get_users():
+        banned = page.client_ip in DataBase.get_banned_users()
+        if banned:
             new_message.disabled = True
             send_message.disabled = True
             new_message.hint_text = "You have been banned from the chat"
@@ -221,8 +252,7 @@ def main(page: ft.Page) -> None:
         page.pubsub.send_all(
             Message(
                 user_name=f"{join_user_name.value}",
-                data=f"The ghost {join_user_name.value} has joined the chat."
-                    if page.client_ip in DataBase.get_banned_users()
+                data=f"The ghost {join_user_name.value} has joined the chat." if banned
                     else f"{join_user_name.value} has joined the chat.",
                 message_type="login_message",
             )
@@ -257,7 +287,9 @@ def main(page: ft.Page) -> None:
             page.update()
 
 
-    async def on_message(message: Message) -> None:
+    def on_message(message: Message) -> None:
+        m = None
+        
         if message.message_type == "login_message":
             m = ft.Text(message.data, italic=True, color=ft.Colors.BLUE_400, size=12)
             
@@ -279,22 +311,24 @@ def main(page: ft.Page) -> None:
                         m = ft.Text("Images cleared by god", italic=True, color=ft.Colors.RED, size=12)
                     
                 case "/ban":
-                    if page.session.get("user_name") == command_args[1]:
+                    if command_args[1] in DataBase.get_name_by_ip(page.client_ip):
                         new_message.disabled = True
+                        send_image.disabled = True
                         send_message.disabled = True
                         new_message.hint_text = "You have been banned from the chat"
                         
-                        DataBase.add_banned_user(command_args[1])
+                        DataBase.add_banned_user(page.client_ip)
                         
                     m = ft.Text(f"User {command_args[1]} has been banned", italic=True, color=ft.Colors.RED, size=12)
                 
                 case "/unban":
-                    if page.session.get("user_name") == command_args[1]:
+                    if command_args[1] in DataBase.get_name_by_ip(page.client_ip):
                         new_message.disabled = False
+                        send_image.disabled = False
                         send_message.disabled = False
                         new_message.hint_text = "Write a message..."
                         
-                        DataBase.remove_banned_user(command_args[1]) if command_args[1] in DataBase.get_banned_users() else None
+                        DataBase.remove_banned_user(page.client_ip)
                         
                     m = ft.Text(f"User {command_args[1]} has been unbanned", italic=True, color=ft.Colors.BLUE_400, size=12)
                 
@@ -310,21 +344,36 @@ def main(page: ft.Page) -> None:
 
                 case "/users":
                     if page.session.get("user_name") == message.user_name:
-                        users = " ".join(DataBase.get_users())
-                        m = ft.Text(f"Current users: {users}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
+                        users = [f"{user}, {ip}, {banned}" for user, ip, banned in DataBase.get_users()]
+                        users_format = "\n"+"\n".join(users)
+                        
+                        m = ft.Text(f"Current users: {users_format}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
                     
+                case "/banned-users":
+                    if page.session.get("user_name") == message.user_name:
+                        users = [f"{user}, {ip}, {banned}" for user, ip, banned in DataBase.get_users() if banned == 1]
+                        users_format = "\n"+"\n".join(users)
+                        
+                        m = ft.Text(f"Current banned users: {users_format}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
+                
+                case "/is-banned":
+                    if page.session.get("user_name") == message.user_name:
+                        is_banned = bool([banned for user, ip, banned in DataBase.get_users() if user == command_args[1]][0])
+                        
+                        m = ft.Text(f"Is user {command_args[1]} banned? {"Yes" if is_banned else "No"}", italic=True, color=ft.Colors.AMBER, size=12)
+                
                 case _:
                     m = ft.Text(f"Unknown command: {message.data}", italic=True, color=ft.Colors.RED, size=12)
         else:
             m = message.send_message()
         
+        if m != None:
+            chat.controls.append(m)
         
-        chat.controls.append(m)
-
         page.update()
 
     page.pubsub.subscribe(on_message)
-
+    
     # A dialog asking for a user display name
     join_user_name = ft.TextField(
         label="Enter your name to join the chat",
@@ -415,3 +464,4 @@ def main(page: ft.Page) -> None:
 
 
 ft.app(target=main, assets_dir="assets", upload_dir="assets/upload")
+DataBase.close_database()
