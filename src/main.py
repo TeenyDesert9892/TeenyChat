@@ -1,13 +1,8 @@
-from PIL import Image
-from io import BytesIO
-from icecream import ic
+from scripts.database_handeler import Database
+from scripts.message_handeler import Message
 
 import flet as ft
-import numpy as np
 
-import asyncio
-import sqlite3
-import base64
 import socket
 import os
 
@@ -16,159 +11,7 @@ host_ip = socket.gethostbyname(socket.gethostname())
 os.environ["FLET_SECRET_KEY"] = os.urandom(12).hex()
 os.environ["FLET_SERVER_PORT"] = "9892"
 
-class Database:
-    def __init__(self) -> None:
-        self.connection = sqlite3.connect("users.db", check_same_thread=False)
-        
-        self.connection.execute("""
-            DROP TABLE IF EXISTS USERS
-        """)
-        
-        self.connection.execute("""
-        CREATE TABLE IF NOT EXISTS USERS (
-            USER_NAME TEXT NOT NULL UNIQUE PRIMARY KEY,
-            IP_ADDRESS TEXT NOT NULL,
-            BANNED BOOL NOT NULL DEFAULT 0
-        )""")
-        
-    def add_user(self, user_name: str, ip_address: str) -> None:
-        self.connection.execute(f"""INSERT INTO USERS (USER_NAME, IP_ADDRESS, BANNED) VALUES (
-            '{user_name}',
-            '{ip_address}',
-            0
-        )""")
-        
-        self.connection.commit()
-    
-    def remove_user(self, user_name: str) -> None:
-        self.connection.execute(f"""DELETE FROM USERS WHERE USER_NAME = '{user_name}'""")
-        self.connection.commit()
-    
-    def get_users(self) -> list[str]:
-        cursor = self.connection.cursor()
-        cursor.execute(f"""SELECT * FROM USERS""")
-        result = cursor.fetchall()
-        
-        return result
-    
-    def add_banned_user(self, ip_address: str) -> None:
-        self.connection.execute(f"""UPDATE USERS SET BANNED = 1 WHERE IP_ADDRESS = '{ip_address}'""")
-        self.connection.commit()
-    
-    def remove_banned_user(self, ip_address: str) -> None:
-        self.connection.execute(f"""UPDATE USERS SET BANNED = 0 WHERE IP_ADDRESS = '{ip_address}'""")
-        self.connection.commit()
-    
-    def get_banned_users(self) -> list[str]:
-        cursor = self.connection.cursor()
-        cursor.execute(f"""SELECT * FROM USERS WHERE BANNED = 1""")
-        result = cursor.fetchall()
-        
-        return result
-    
-    def get_name_by_ip(self, ip_address: str) -> list[str]:
-        cursor = self.connection.cursor()
-        cursor.execute(f"""SELECT USER_NAME FROM USERS WHERE IP_ADDRESS = '{ip_address}'""")
-        result = cursor.fetchall()
-        
-        return list(sum(result, ()))
-    
-    def close_database(self) -> None:
-        self.connection.close()
-
 DataBase = Database()
-
-
-class Message:
-    def __init__(self, user_name: str, data, message_type: str) -> None:
-        self.user_name = user_name
-        self.data = data
-        self.message_type = message_type
-    
-    def send_message(self) -> ft.Row:
-        if self.message_type == "chat_message":
-            message = TextMessage(self)
-            
-        elif self.message_type == "image_message":
-            message = ImageMessage(self)
-            
-        return message
-    
-    
-    def get_initials(self, user_name: str) -> str:
-                return user_name[:1].capitalize() if user_name else socket.gethostbyname()
-
-
-    def get_avatar_color(self, user_name: str) -> str:
-        colors_lookup= [
-            ft.Colors.AMBER,
-            ft.Colors.BLUE,
-            ft.Colors.BROWN,
-            ft.Colors.CYAN,
-            ft.Colors.GREEN,
-            ft.Colors.INDIGO,
-            ft.Colors.LIME,
-            ft.Colors.ORANGE,
-            ft.Colors.PINK,
-            ft.Colors.PURPLE,
-            ft.Colors.RED,
-            ft.Colors.TEAL,
-            ft.Colors.YELLOW,
-        ]
-        return colors_lookup[hash(user_name) % len(colors_lookup)]
-
-
-class TextMessage(ft.Row):
-    def __init__(self, message: Message) -> None:
-        super().__init__()
-        
-        self.vertical_alignment = ft.CrossAxisAlignment.START
-        self.controls = [
-            ft.CircleAvatar(
-                content=ft.Text(message.get_initials(message.user_name)),
-                color=ft.Colors.WHITE,
-                bgcolor=message.get_avatar_color(message.user_name),
-            ),
-            ft.Column(
-                [
-                    ft.Text(message.user_name, weight="bold", selectable=True),
-                    ft.Text(message.data, selectable=True),
-                ],
-                tight=True,
-                spacing=5,
-            ),
-        ]
-
-
-class ImageMessage(ft.Row):
-    def __init__(self, message: Message) -> None:
-        super().__init__()
-        
-        image_path = os.path.normpath(f"{os.getcwd()}/src/assets/{message.data}")
-        pillow_photo = Image.open(image_path)
-        arr = np.asarray(pillow_photo)
-
-        pillow_img = Image.fromarray(arr)
-        buff = BytesIO()
-        pillow_img.save(buff, format=pillow_photo.format)
-        
-        self.vertical_alignment = ft.CrossAxisAlignment.START
-        self.controls = [
-            ft.CircleAvatar(
-                content=ft.Text(message.get_initials(message.user_name)),
-                color=ft.Colors.WHITE,
-                bgcolor=message.get_avatar_color(message.user_name),
-            ),
-            ft.Column(
-                [
-                    ft.Text(message.user_name, weight="bold", selectable=True),
-                    ft.Image(src_base64=base64.b64encode(buff.getvalue()).decode('utf-8'),
-                            width=pillow_photo.width if pillow_photo.width < 600 else 600),
-                ],
-                tight=True,
-                spacing=5,
-            ),
-        ]
 
 
 def main(page: ft.Page) -> None:
@@ -178,36 +21,36 @@ def main(page: ft.Page) -> None:
     def on_exit(event) -> None:
         DataBase.remove_user(page.session.get("user_name"))
         
-        page.pubsub.send_all(
-            Message(
-                user_name=f"{page.session.get('user_name')}",
-                data=f"{page.session.get('user_name')} has left the chat.",
-                message_type="login_message"
+        if page.session.get("user_name"):
+            page.pubsub.send_all(
+                Message(
+                    user_name=f"{page.session.get('user_name')}",
+                    data=f"{page.session.get('user_name')} has left the chat.",
+                    message_type="login_message"
+                )
             )
-        )
 
     page.on_disconnect = on_exit
     
     
     def on_join(event) -> None:
-        if page.session.get("user_name"):
-            DataBase.add_user(page.session.get("user_name"), page.client_ip)
-        
         if page.client_ip in DataBase.get_banned_users():
             new_message.disabled = True
             image_file_picker.disabled = True
             send_message.disabled = True
-        
-        page.pubsub.send_all(
-            Message(
-                user_name=f"{page.session.get('user_name')}",
-                data=f"{page.session.get('user_name')} has joined the chat.",
-                message_type="login_message"
+            
+        if page.session.get("user_name"):
+            DataBase.add_user(page.session.get("user_name"), page.client_ip)
+            
+            page.pubsub.send_all(
+                Message(
+                    user_name=f"{page.session.get('user_name')}",
+                    data=f"{page.session.get('user_name')} has joined the chat.",
+                    message_type="login_message"
+                )
             )
-        )
         
         page.update()
-    
     
     page.on_connect = on_join
 
@@ -304,8 +147,8 @@ def main(page: ft.Page) -> None:
                     m = ft.Text("Chat cleared by god", italic=True, color=ft.Colors.RED, size=12)
                 
                 case "/clear-img":
-                    for file in os.scandir("src/assets/upload/images"):
-                        os.remove(f"src/assets/upload/images/{file.name}")
+                    for file in os.scandir("src/upload/images"):
+                        os.remove(f"src/upload/images/{file.name}")
                     
                     if message.user_name == page.session.get("user_name"):
                         m = ft.Text("Images cleared by god", italic=True, color=ft.Colors.RED, size=12)
@@ -463,5 +306,5 @@ def main(page: ft.Page) -> None:
     )
 
 
-ft.app(target=main, assets_dir="assets", upload_dir="assets/upload")
+ft.app(target=main, assets_dir="assets", upload_dir="upload")
 DataBase.close_database()
