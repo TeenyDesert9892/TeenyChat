@@ -3,6 +3,7 @@ from scripts.message_handeler import Message
 
 import flet as ft
 
+import sqlite3
 import socket
 import os
 
@@ -11,8 +12,10 @@ host_ip = socket.gethostbyname(socket.gethostname())
 os.environ["FLET_SECRET_KEY"] = os.urandom(12).hex()
 os.environ["FLET_SERVER_PORT"] = "9892"
 
-DataBase = Database()
+os.environ["FLET_ASSETS_DIR"] = os.path.normpath(f"{os.getcwd()}/src/assets")
+os.environ["FLET_UPLOAD_DIR"] = os.path.normpath(f"{os.getcwd()}/src/upload")
 
+DataBase = Database(host_ip)
 
 def main(page: ft.Page) -> None:
     page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
@@ -55,8 +58,8 @@ def main(page: ft.Page) -> None:
     page.on_connect = on_join
 
     
-    def verify_admin() -> bool:
-        return page.session.get("user_name") == "Teeny" and (page.client_ip == host_ip or page.client_ip == "127.0.0.1")
+    def verify_admin(user_name) -> bool:
+        return True if user_name in [name for name, ip, admin, baned in DataBase.get_admin_users()] else False
     
 
     def join_chat_click(event) -> None:
@@ -109,7 +112,7 @@ def main(page: ft.Page) -> None:
                 Message(
                     user_name=page.session.get("user_name"),
                     data=new_message.value,
-                    message_type="command" if "/" == new_message.value[0] and verify_admin() else "chat_message"
+                    message_type="command" if "/" == new_message.value[0] and verify_admin(page.session.get("user_name")) else "chat_message"
                 )
             )
             new_message.value = ""
@@ -137,7 +140,7 @@ def main(page: ft.Page) -> None:
             m = ft.Text(message.data, italic=True, color=ft.Colors.BLUE_400, size=12)
             
         elif message.message_type == "command":
-            command_args: list[str] = message.data.split()
+            command_args = message.data.split()
             match command_args[0]:
                 case "/say":
                     m = ft.Text("God says: "+" ".join(command_args[1::1]) , size=24)
@@ -152,6 +155,25 @@ def main(page: ft.Page) -> None:
                     
                     if message.user_name == page.session.get("user_name"):
                         m = ft.Text("Images cleared by god", italic=True, color=ft.Colors.RED, size=12)
+                        
+                case "/users":
+                    if page.session.get("user_name") == message.user_name:
+                        users = [f"{user}, {ip}, {banned}" for user, ip, banned in DataBase.get_users()]
+                        users_format = "\n"+"\n".join(users)
+                        
+                        m = ft.Text(f"Current users: {users_format}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
+                
+                case "/kick":
+                    if page.session.get("user_name") == command_args[1]:                
+                        page.session.clear()
+                        DataBase.remove_user(command_args[1])
+                        
+                        welcome_dlg.open = True
+                        
+                        page.update()
+                        page.window.destroy()
+                        
+                    m = ft.Text(f"User {command_args[1]} has been kicked", italic=True, color=ft.Colors.RED, size=12)
                     
                 case "/ban":
                     if command_args[1] in DataBase.get_name_by_ip(page.client_ip):
@@ -175,22 +197,6 @@ def main(page: ft.Page) -> None:
                         
                     m = ft.Text(f"User {command_args[1]} has been unbanned", italic=True, color=ft.Colors.BLUE_400, size=12)
                 
-                case "/kick":
-                    if page.session.get("user_name") == command_args[1]:
-                        import random
-                        kick_urls = ["https://classicgamezone.com/es/games/pokemon-girls-hunter-3"]
-                        page.launch_url(random.choice(kick_urls), web_popup_window=False)
-                        page.update()
-                        page.window.destroy()
-                        
-                    m = ft.Text(f"User {command_args[1]} has been kicked", italic=True, color=ft.Colors.RED, size=12)
-
-                case "/users":
-                    if page.session.get("user_name") == message.user_name:
-                        users = [f"{user}, {ip}, {banned}" for user, ip, banned in DataBase.get_users()]
-                        users_format = "\n"+"\n".join(users)
-                        
-                        m = ft.Text(f"Current users: {users_format}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
                     
                 case "/banned-users":
                     if page.session.get("user_name") == message.user_name:
@@ -201,9 +207,36 @@ def main(page: ft.Page) -> None:
                 
                 case "/is-banned":
                     if page.session.get("user_name") == message.user_name:
-                        is_banned = bool([banned for user, ip, banned in DataBase.get_users() if user == command_args[1]][0])
+                        is_banned = "Yes" if bool([banned for user, ip, banned in DataBase.get_users() if user == command_args[1]][0]) else "No"
                         
-                        m = ft.Text(f"Is user {command_args[1]} banned? {"Yes" if is_banned else "No"}", italic=True, color=ft.Colors.AMBER, size=12)
+                        m = ft.Text(f"Is user {command_args[1]} banned? {is_banned}", italic=True, color=ft.Colors.AMBER, size=12)
+                
+                case "/admin":
+                    if command_args[1] == page.session.get("user_name"):
+                        DataBase.add_admin_user(command_args[1])
+                    
+                    if verify_admin(page.session.get("user_name")):
+                        m = ft.Text(f"User {command_args[1]} is now admin", italic=True, color=ft.Colors.AMBER, size=12)
+                
+                case "/unadmin":
+                    if command_args[1] == page.session.get("user_name"):
+                        DataBase.remove_admin_user(command_args[1])
+                    
+                    if verify_admin(page.session.get("user_name")):
+                        m = ft.Text(f"User {command_args[1]} is not admin now", italic=True, color=ft.Colors.RED, size=12)
+                    
+                case "/admin-users":
+                    if command_args[1] == page.session.get("user_name"):
+                        users = [f"{user}, {ip}, {admin}, {banned}" for user, ip, admin, banned in DataBase.get_users() if admin == 1]
+                        users_format = "\n"+"\n".join(users)
+                        
+                        m = ft.Text(f"Current banned users: {users_format}", italic=True, color=ft.Colors.AMBER, size=12, selectable=True)
+                
+                case "/is-admin":
+                    if page.session.get("user_name") == message.user_name:
+                        is_banned = "Yes" if bool([admin for user, ip, admin, banned in DataBase.get_users() if user == command_args[1]][0]) else "No"
+                        
+                        m = ft.Text(f"Is user {command_args[1]} admin? {is_banned}", italic=True, color=ft.Colors.AMBER, size=12)
                 
                 case _:
                     m = ft.Text(f"Unknown command: {message.data}", italic=True, color=ft.Colors.RED, size=12)
@@ -306,5 +339,6 @@ def main(page: ft.Page) -> None:
     )
 
 
-ft.app(target=main, assets_dir="assets", upload_dir="upload")
-DataBase.close_database()
+if __name__ == "__main__":
+    ft.app(target=main)
+    DataBase.close_database()
