@@ -72,10 +72,10 @@ def main(page: ft.Page) -> None:
 
     def chat_stop(event) -> None:
         DataBase.close_database()
-    
+        
     page.on_close = chat_stop
-
     
+
     def verify_admin(user_name: str) -> bool:
         return True if user_name in [name for name, ip, admin, baned in DataBase.get_admin_users()] else False
     
