@@ -11,7 +11,7 @@ class Chat:
     def get_chat(self) -> ft.ListView:
         return self.messages_list
     
-    def clear(self) -> None:
+    def clean(self) -> None:
         self.messages_list.controls.clear()
     
     def new_message(self, message) -> None:
@@ -28,6 +28,12 @@ class ChatList:
     
     def remove_chat(self, name: str) -> None:
         self.chat_dict.pop(name)
+        
+    def send_message(self, chat: str, message) -> None:
+        self.chat_dict[chat].new_message(message)
+    
+    def clear_chat(self, chat: str) -> None:
+        self.chat_dict[chat].clean()
     
     def get_chat(self, name: str) -> Chat:
         return self.chat_dict[name]
@@ -36,4 +42,5 @@ class ChatList:
         return self.chat_dict[name].get_chat()
     
     def get_chats_list(self) -> list[str]:
-        return [chat for chat in self.chat_dict.keys()]
+        return [chat for chat in self.chat_dict.keys()] 
+    

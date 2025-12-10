@@ -78,3 +78,4 @@ class Database:
     
     def close_database(self) -> None:
         self.connection.close()
+        

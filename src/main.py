@@ -1,5 +1,3 @@
-from click.decorators import command
-from PIL.ImageOps import expand
 from scripts.database_handeler import Database
 from scripts.message_handeler import Message
 from scripts.chat_handeler import ChatList
@@ -38,7 +36,7 @@ def main(page: ft.Page) -> None:
                     user_name=f"{page.session.get('user_name')}",
                     data=f"{page.session.get('user_name')} has left the chat.",
                     message_type="login_message",
-                    chat=chat_list.get_chat("General")
+                    chat="General"
                 )
             )
 
@@ -61,7 +59,7 @@ def main(page: ft.Page) -> None:
                     user_name=f"{page.session.get('user_name')}",
                     data=f"{page.session.get('user_name')} has joined the chat.",
                     message_type="login_message",
-                    chat=chat_list.get_chat("General")
+                    chat="General"
                 )
             )
         
@@ -112,7 +110,7 @@ def main(page: ft.Page) -> None:
                 data=f"The ghost {join_user_name.value} has joined the chat." if banned
                     else f"{join_user_name.value} has joined the chat.",
                 message_type="login_message",
-                chat=chat_list.get_chat("General")
+                chat="General"
             )
         )
         page.update()
@@ -125,7 +123,7 @@ def main(page: ft.Page) -> None:
                     user_name=page.session.get("user_name"),
                     data=new_message.value,
                     message_type="command" if "/" == new_message.value[0] and verify_admin(page.session.get("user_name")) else "chat_message",
-                    chat=chat_list.get_chat(page.session.get("current_chat"))
+                    chat=page.session.get("current_chat")
                 )
             )
             new_message.value = ""
@@ -140,7 +138,7 @@ def main(page: ft.Page) -> None:
                     user_name=page.session.get("user_name"),
                     data=f"upload/images/{event.file_name}",
                     message_type="image_message",
-                    chat=chat_list.get_chat(page.session.get("current_chat"))
+                    chat=page.session.get("current_chat")
                 )
             )
             new_message.focus()
@@ -165,7 +163,7 @@ def main(page: ft.Page) -> None:
                     m = ft.Text("An admin says: "+" ".join(command_args[1::1]) , size=24)
                 
                 case "/clear":
-                    message.chat.clear()
+                    chat_list.clear(message.chat)
                     m = ft.Text("Chat cleared by an admin", italic=True, color=ft.Colors.RED, size=12)
                 
                 case "/clear-img":
@@ -257,11 +255,24 @@ def main(page: ft.Page) -> None:
             m = message.send_message()
         
         if m != None:
-            message.chat.new_message(m)
+            chat_list.send_message(message.chat, m)
         
         page.update()
-        
-    page.pubsub.subscribe(on_message)
+    
+    
+    def on_chat_create(name: str) -> None:
+        chat_list.create_chat(name)
+        update_chat_list(True)
+    
+    
+    def on_subscribe(message):
+        if isinstance(message, Message):
+            on_message(message)
+        else:
+            on_chat_create(message)
+            
+    
+    page.pubsub.subscribe(on_subscribe)
     
     # A function to pick images
     def pick_image(event) -> None:
@@ -334,8 +345,7 @@ def main(page: ft.Page) -> None:
     update_chat_list(False)
     
     def add_chat_click(event):
-            chat_list.create_chat(chat_create_name.value)
-            update_chat_list(True)
+            page.pubsub.send_all(chat_create_name.value)
             chat_create_dialog.open = False
             page.update()
     
@@ -394,7 +404,7 @@ def main(page: ft.Page) -> None:
     
     # Container of the current chat
     chat_box = ft.Container(
-        content=chat_list.get_chat("General").get_chat(),
+        content=chat_list.get_chat_control("General"),
         border=ft.border.all(1, ft.Colors.OUTLINE),
         border_radius=5,
         padding=10,
