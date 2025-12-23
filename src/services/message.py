@@ -8,44 +8,37 @@ import base64
 import socket
 import os
 
-class Message:
-    def __init__(self, user_name: str, data, message_type: str, chat: str) -> None:
-        self.user_name = user_name
-        self.data = data
-        self.message_type = message_type
-        self.chat = chat
-    
-    def send_message(self) -> ft.Row:
-        if self.message_type == "chat_message":
-            message = TextMessage(self)
-            
-        elif self.message_type == "image_message":
-            message = ImageMessage(self)
-            
-        return message
-    
-    
-    def get_initials(self, user_name: str) -> str:
-                return user_name[:1].capitalize() if user_name else socket.gethostbyname()
+def send_message(message) -> ft.Row:
+    if message.message_type == "chat_message":
+        m = TextMessage(message)
+        
+    elif message.message_type == "image_message":
+        m = ImageMessage(message)
+        
+    return m
 
 
-    def get_avatar_color(self, user_name: str) -> str:
-        colors_lookup= [
-            ft.Colors.AMBER,
-            ft.Colors.BLUE,
-            ft.Colors.BROWN,
-            ft.Colors.CYAN,
-            ft.Colors.GREEN,
-            ft.Colors.INDIGO,
-            ft.Colors.LIME,
-            ft.Colors.ORANGE,
-            ft.Colors.PINK,
-            ft.Colors.PURPLE,
-            ft.Colors.RED,
-            ft.Colors.TEAL,
-            ft.Colors.YELLOW,
-        ]
-        return colors_lookup[hash(user_name) % len(colors_lookup)]
+def get_initials(user_name: str) -> str:
+    return user_name[:1].capitalize() if user_name else socket.gethostbyname(socket.gethostname())
+
+
+def get_avatar_color(user_name: str) -> str:
+    colors_lookup= [
+        ft.Colors.AMBER,
+        ft.Colors.BLUE,
+        ft.Colors.BROWN,
+        ft.Colors.CYAN,
+        ft.Colors.GREEN,
+        ft.Colors.INDIGO,
+        ft.Colors.LIME,
+        ft.Colors.ORANGE,
+        ft.Colors.PINK,
+        ft.Colors.PURPLE,
+        ft.Colors.RED,
+        ft.Colors.TEAL,
+        ft.Colors.YELLOW,
+    ]
+    return colors_lookup[hash(user_name) % len(colors_lookup)]
 
 
 class TextMessage(ft.Row):
@@ -55,9 +48,9 @@ class TextMessage(ft.Row):
         self.vertical_alignment = ft.CrossAxisAlignment.START
         self.controls = [
             ft.CircleAvatar(
-                content=ft.Text(message.get_initials(message.user_name)),
+                content=ft.Text(get_initials(message.user_name)),
                 color=ft.Colors.WHITE,
-                bgcolor=message.get_avatar_color(message.user_name),
+                bgcolor=get_avatar_color(message.user_name),
             ),
             ft.Column(
                 [
@@ -85,9 +78,9 @@ class ImageMessage(ft.Row):
         self.vertical_alignment = ft.CrossAxisAlignment.START
         self.controls = [
             ft.CircleAvatar(
-                content=ft.Text(message.get_initials(message.user_name)),
+                content=ft.Text(get_initials(message.user_name)),
                 color=ft.Colors.WHITE,
-                bgcolor=message.get_avatar_color(message.user_name),
+                bgcolor=get_avatar_color(message.user_name),
             ),
             ft.Column(
                 [

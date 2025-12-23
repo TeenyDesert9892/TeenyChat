@@ -1,9 +1,10 @@
+import socket
 import sqlite3
 
 class Database:
-    def __init__(self, host_ip) -> None:
+    def __init__(self) -> None:
         self.connection = sqlite3.connect("src/assets/database.db", check_same_thread=False)
-        self.host_ip = host_ip
+        self.host_ip = socket.gethostbyname(socket.gethostname())
         
         self.connection.execute("""
             DROP TABLE IF EXISTS USERS
@@ -19,12 +20,8 @@ class Database:
         
     def add_user(self, user_name: str, ip_address: str) -> None:
         admin = 1 if ip_address == "127.0.0.1" or ip_address == self.host_ip else 0
-        self.connection.execute(f"""INSERT INTO USERS (USER_NAME, IP_ADDRESS, ADMIN, BANNED) VALUES (
-            '{user_name}',
-            '{ip_address}',
-            {admin},
-            0
-        )""")
+        self.connection.execute("""INSERT INTO USERS (USER_NAME, IP_ADDRESS, ADMIN, BANNED) VALUES (?, ?, ?, ?)""",
+                                (user_name, ip_address, admin, 0))
         
         self.connection.commit()
     
@@ -78,4 +75,5 @@ class Database:
     
     def close_database(self) -> None:
         self.connection.close()
-        
+
+DataBase = Database()

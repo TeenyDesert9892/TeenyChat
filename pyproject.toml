@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "teenychat"
-version = "0.1.4"
+version = "0.3"
 description = "A chat app maded with Flet"
 readme = "README.md"
 python = "3.14"
